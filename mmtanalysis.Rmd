@@ -1,0 +1,554 @@
+---
+title: "MakeMyTrip Airline Rating and Review Analysis"
+author: "Avinash Singh Pundhir"
+date: "November 21, 2015"
+output: html_document
+---
+
+#Problem Statement
+Identify the best and worst airlines using a given dataset of passenger reviews.
+
+#Executive Summary
+
+* We have followed the following approach for identification of best and worst airlines
+- Identified weights associated with various ratings using reviews text mining.
+- Calculated final ratings based on weighted and overall ratings.
+- Identified top 10 airlines based on % recommendation, overall rating and weighted ratings
+- Identified bottom 10 airlines based on % recommendation, overall rating and weighted ratings
+
+* Top 2 Airlines:
+
+- Asiana Airlines - For their consistent increase in customer satisfaction in 2014
+- Eva air - For their consistent performance between 2011 to 2015
+
+* Worst 2 Airlines:
+
+- United Airlines - For the consistent decrease in customer satisfaction
+- Vueling Airlines - For the lowest performance between 2014 to 2015
+
+#Input Dataset
+Input dataset contains 41396 observations for 18 variables. Some of the variables provided are following:
+
+Passenger reviews of airlines. Using these reviews, identify the best and worst 2 airlines among these. 
+Also, what do passengers like most about the best airlines and dislike the most about the worst airlines? 
+
+* Loading Required packages
+
+```{r echo=TRUE, message=FALSE}
+require(dplyr)
+require(ggplot2)
+require(ggthemes)
+require(gridExtra)
+require(sentiment)
+require(tm)
+require(RColorBrewer)
+require(wordcloud)
+require(SnowballC)
+require(reshape2)
+require(lubridate)
+require(scales)
+```
+
+##Loading and cleaning data
+
+```{r echo=TRUE}
+mmtmaster <- read.csv("AirlinePassengerReview.csv", 
+                      stringsAsFactors = FALSE)
+nameclean <- names(mmtmaster)
+nameclean <- gsub("_", "", nameclean)
+names(mmtmaster) <- tolower(nameclean)
+mmtmaster <- rename(mmtmaster, recommended = recommended..1..yes..0..no.)
+mmtmaster$airlinename <- tolower(mmtmaster$airlinename)
+```
+
+##Text Mining of Reviews
+
+```{r, echo=TRUE}
+flightreview <- select(mmtmaster, airlinename, review, recommended)
+#Cleaning Data
+#Remove punctuation
+flightreview$review <- tolower(flightreview$review)
+flightreview$review <- gsub("[[:punct:]]", "",flightreview$review)
+#Remove numbers
+flightreview$review <- gsub("[[:digit:]]", "", flightreview$review)
+#Remove unnecessary spaces 
+flightreview$review <- gsub("[ \t]{2,}", "", flightreview$review)
+flightreview$review <- gsub("^\\s+|\\s+$", "", flightreview$review)
+flightreview$review <- gsub("flight", "", flightreview$review)
+flightreview$review <- gsub("flights", "", flightreview$review)
+positivereview <- filter(flightreview, recommended == 1)
+negativereview <- filter(flightreview, recommended == 0)
+```
+
+###Analysis on Customer Reviews to identify weight factor
+
+```{r, echo=TRUE, cache=TRUE}
+myCorpus <- Corpus(VectorSource(flightreview$review[]))
+myCorpus <- tm_map(myCorpus, tolower)
+myCorpus <- tm_map(myCorpus, PlainTextDocument)
+myCorpus <- tm_map(myCorpus, removePunctuation)
+myCorpus <- tm_map(myCorpus, removeNumbers)
+myCorpus <- tm_map(myCorpus, removeWords, stopwords("english"))
+myCorpus <- tm_map(myCorpus, stemDocument)
+wordcloud(myCorpus, scale=c(5,0.5), max.words=100, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+```
+
+* The following are the most important factors based on text mining of user reviews:
+- Seat
+- Staff/Crew
+- Service
+- Time
+- Food/meal/drink
+
+##Rating Calculation
+
+```{r, echo=TRUE}
+#Extracting ratings data from master
+flightratings <- select(mmtmaster, airlinename, date, overallrating:recommended) %>% 
+                 group_by(airlinename)
+flightratings$seatcomfortrating <- 2*flightratings$seatcomfortrating
+flightratings$cabinstaffrating <- 2*flightratings$cabinstaffrating
+flightratings$foodbeveragesrating <- 2*flightratings$foodbeveragesrating
+flightratings$inflightentertainmentrating <- 2*flightratings$inflightentertainmentrating
+flightratings$groundservicerating <- 2*flightratings$groundservicerating
+flightratings$wificonnectivityrating <- 2*flightratings$wificonnectivityrating
+flightratings$valuemoneyrating <- 2*flightratings$valuemoneyrating
+#Identifying total number of entries
+countdf <- as.data.frame(table(flightratings$airlinename))
+names(countdf) <- c("airlinename", "count")
+summary(countdf)
+#Extracting airlines for which we have more than 150 reviews i.e. 3rd quantile
+countdf <- filter(countdf, count > 150)
+flightratings <- filter(flightratings, airlinename %in% countdf$airlinename)
+presummary <- summary(flightratings)
+```
+
+* Imputing NA values 
+
+```{r echo=TRUE}
+imval <- summarise(flightratings, 
+                   meanoverall = mean(overallrating, na.rm = TRUE),
+                   meanseatcomf = mean(seatcomfortrating, na.rm = TRUE),
+                   meancabinstaff = mean(cabinstaffrating, na.rm = TRUE),
+                   meanfoodbev = mean(foodbeveragesrating, na.rm = TRUE),
+                   meanentertainment = mean(inflightentertainmentrating, na.rm = TRUE),
+                   meangroundser = mean(groundservicerating, na.rm = TRUE),
+                   meanwifi = mean(wificonnectivityrating, na.rm = TRUE),
+                   meanvaluemoney = mean(valuemoneyrating, na.rm = TRUE),
+                   sumrecommended = sum(recommended, na.rm = TRUE))
+
+for(i in 1:nrow(flightratings)){
+        if (is.na(flightratings$overallrating[i])){
+                flightratings$overallrating[i] <- imval$meanoverall[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$seatcomfortrating[i])){
+                flightratings$seatcomfortrating[i] <- imval$meanseatcomf[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$cabinstaffrating[i])){
+                flightratings$cabinstaffrating[i] <- imval$meancabinstaff[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$foodbeveragesrating[i])){
+                flightratings$foodbeveragesrating[i] <- imval$meanfoodbev[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$inflightentertainmentrating[i])){
+                flightratings$inflightentertainmentrating[i] <- imval$meanentertainment[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$groundservicerating[i])){
+                flightratings$groundservicerating[i] <- imval$meangroundser[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$wificonnectivityrating[i])){
+                flightratings$wificonnectivityrating[i] <- imval$meanwifi[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+        if (is.na(flightratings$valuemoneyrating[i])){
+                flightratings$valuemoneyrating[i] <- imval$meanvaluemoney[match(flightratings$airlinename[i], imval$airlinename)]
+        }
+}
+flightratings[is.na(flightratings)] <- 0
+postsummary <- summary(flightratings)
+```
+
+* Comparision of Summary before and after imputing data
+
+```{r, echo=TRUE}
+presummary
+postsummary
+```
+
+* Here we can se that the data imputing strategy hasn't resulted in significant changes in mean on any rating data.
+
+##Calculating Consolidated rating
+
+```{r, echo=TRUE}
+#Function call to get consolidated rating per observation
+seatcomfortwt <- 0.3
+cabinstaffwt <- 0.2
+foodbevwt <- 0.2
+entertainmentwt <- 0.1
+groundservicewt <- 0.1
+wifiwt <- 0.0
+valuemoneywt <- 0.1
+
+flightratings <- mutate(flightratings, wtrating = seatcomfortwt*seatcomfortrating +
+                                                  cabinstaffwt*cabinstaffrating +
+                                                  foodbevwt*foodbeveragesrating +
+                                                  entertainmentwt*inflightentertainmentrating +
+                                                  groundservicewt*groundservicerating +
+                                                  wifiwt*wificonnectivityrating + 
+                                                  valuemoneywt*valuemoneyrating)
+```
+
+* Normalization to create a dataset that can be compared across different number of total reviews
+
+```{r, echo=TRUE}
+ratingcompare <-  summarise(flightratings, sumoverall = sum(overallrating), 
+                                           sumwtrating = sum(wtrating), 
+                                           sumrecommended = sum(recommended))
+for(i in 1:nrow(ratingcompare)){
+                ratingcompare$reviewcount[i] <- countdf$count[match(ratingcompare$airlinename[i], countdf$airlinename)]
+}
+
+#Normalization of data
+ratingcompare$sumoverall <- ratingcompare$sumoverall/countdf$count[match(ratingcompare$airlinename, countdf$airlinename)]
+ratingcompare$sumwtrating <- ratingcompare$sumwtrating/countdf$count[match(ratingcompare$airlinename, countdf$airlinename)]
+
+
+#Calculation of Weighted rating
+ratingcompare <- mutate(ratingcompare, 
+                        finalrating = 0.5*sumoverall + 0.5*sumwtrating)
+```
+
+* Box Plot to Summarize Rating Range
+
+```{r, echo=TRUE}
+#Converting wide format data into long format using reshape2
+meltratingcompare <- melt(ratingcompare, id.vars = c("airlinename", 
+                                                     "reviewcount", 
+                                                     "sumrecommended"), 
+                          variable.name = "typeofrating", value.name = "ratingvalue")
+levels(meltratingcompare$typeofrating) <- c("Overall Rating", 
+                                            "Weighted Rating",
+                                            "Final Rating")
+
+plot1 <- ggplot(meltratingcompare, aes(x = factor(0), 
+                                   y = ratingvalue, 
+                                   fill = typeofrating,
+                                   alpha = 0.9))
+plot1 <- plot1 + geom_boxplot() + 
+         facet_wrap(~typeofrating) + 
+         stat_summary(fun.y = "mean", geom = "point", shape = 23, size = 3, fill = "white") +
+         theme_economist() + 
+         scale_colour_economist() +
+         theme(legend.title = element_blank(),
+               plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.1),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2)) + 
+         labs(x = "", y = "Rating", title = "Exploratory Analysis of Calculated Ratings")
+
+plot1
+```
+
+##Identification of Best and Worst airlines
+
+```{r, echo=TRUE}
+#Getting top 10 airlines
+topfinalrating <- arrange(ratingcompare, 
+                          desc(finalrating)) %>% 
+                  filter(row_number() <= 10)
+
+#Names formatting of top airlines
+topfinalrating$airlinename <- c("Garuda", "Asiana", "Evaair", "Koreanair", "Singapore",
+                                "Royalbrunei", "Bangkok", "Omanair", "Anaallnippon", "Qatar")
+
+topfinalrating <- arrange(topfinalrating, airlinename) %>%
+                  mutate(percent = round(sumrecommended/reviewcount*100))
+
+melttopfinalrating <- melt(topfinalrating, 
+                          id.vars = c("airlinename", 
+                                      "reviewcount", 
+                                      "sumrecommended",
+                                      "percent"),
+                          variable.name = "typeofrating",
+                          value.name = "rating")
+
+levels(melttopfinalrating$typeofrating) <- c("Overall Rating", 
+                                            "Weighted Rating",
+                                            "Final Rating")
+
+melttopreview <- melt(topfinalrating,
+                      id.vars = c("airlinename",
+                                  "sumoverall",
+                                  "sumwtrating",
+                                  "finalrating",
+                                  "percent"),
+                      variable.name = "type",
+                      value.name = "count")
+
+melttopreview$percent[11:20] <- "  "
+
+#Creating data for bottom 10 airlines
+
+bottomfinalrating <- arrange(ratingcompare, 
+                          desc(finalrating)) %>% 
+                  filter(row_number() > 82)
+
+#Names formatting of Bottom airlines
+bottomfinalrating$airlinename <- c("Vueling", "USairways", "Allegiant", "Sunwing", "Royalair", 
+                                   "American", "Frontier", "United", "Aircanada", "Spirit")
+
+bottomfinalrating <- arrange(bottomfinalrating, airlinename) %>%
+                  mutate(percent = round(sumrecommended/reviewcount*100))
+
+meltbottomfinalrating <- melt(bottomfinalrating, 
+                          id.vars = c("airlinename", 
+                                      "reviewcount", 
+                                      "sumrecommended",
+                                      "percent"),
+                          variable.name = "typeofrating",
+                          value.name = "rating")
+levels(meltbottomfinalrating$typeofrating) <- c("Overall Rating", 
+                                                "Weighted Rating",
+                                                "Final Rating")
+
+meltbottomreview <- melt(bottomfinalrating,
+                      id.vars = c("airlinename",
+                                  "sumoverall",
+                                  "sumwtrating",
+                                  "finalrating",
+                                  "percent"),
+                      variable.name = "type",
+                      value.name = "count")
+
+meltbottomreview$percent[11:20] <- "  "
+```
+
+##Plotting Best and Worst Airlines Data
+
+```{r, echo=TRUE}
+plot2 <- ggplot(melttopfinalrating, 
+            aes(x = airlinename, 
+                y = rating, 
+                fill = typeofrating),
+            alpha = 0.5)
+plot2 <- plot2 + geom_bar(stat = "identity", width = 0.6, position = "dodge") + 
+         coord_equal() + coord_flip() + ylim(c(0, 10)) +
+         theme_economist() + scale_colour_economist()
+plot2 <- plot2 + theme(axis.text.y=element_text(size=14, 
+                                   vjust=0.5,
+                                   face = "bold"),
+               legend.title = element_blank(),
+               plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.1),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2)) +
+        labs(x = "Airline Name", y = "Ratings", title = "Top Rated Airlines")
+plot2
+
+
+plot3 <- ggplot(data = melttopreview, aes(x = airlinename, y = count, label = percent)) 
+plot3 <- plot3 + geom_point(size = 4, color = "red") + geom_line(size = 2, color = "gray") +             theme_economist() + scale_colour_economist()
+plot3 <- plot3 + theme(axis.text.x=element_text(angle=90, 
+                                   size=14, 
+                                   vjust=0.5,
+                                   face = "bold"),
+           plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.1),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2)) +
+        labs(x = "Airline Name", y = "Count", title = "Total Reviews vs Recommended \n(% Recommended) Top 10 Airlines") + 
+        geom_text(hjust = -0.5, vjust = -2, face = "bold") 
+
+plot3
+#Bottom Plots
+plot4 <- ggplot(meltbottomfinalrating, 
+            aes(x = airlinename, 
+                y = rating, 
+                fill = typeofrating),
+            alpha = 0.5)
+plot4 <- plot4 + geom_bar(stat = "identity", width = 0.6, position = "dodge") + 
+         coord_equal() + coord_flip() + ylim(c(0, 10)) +
+         theme_economist() + scale_colour_economist()
+plot4 <- plot4 + theme(axis.text.y=element_text(size=14, 
+                                   vjust=0.5,
+                                   face = "bold"),
+               legend.title = element_blank(),
+               plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.1),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2)) +
+        labs(x = "Airline Name", y = "Ratings", title = "Lowest Rated Airlines")
+
+plot4
+
+plot5 <- ggplot(data = meltbottomreview, aes(x = airlinename, y = count, label = percent)) 
+plot5 <- plot5 + geom_point(size = 4, color = "red") + geom_line(size = 2, color = "gray") +             theme_economist() + scale_colour_economist()
+plot5 <- plot5 + theme(axis.text.x=element_text(angle=90, 
+                                   size=14, 
+                                   vjust=0.5,
+                                   face = "bold"),
+           plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.1),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2)) +
+        labs(x = "Airline Name", y = "Count", title = "Total Reviews vs Recommended \n(% Recommended) Bottom 10 Airlines") + 
+        geom_text(hjust = -0.5, vjust = -2, face = "bold") 
+
+plot5
+```
+
+* Based on the above analysis the following are the findings:
+* Top 5 Airlines
+- Asiana
+- Garuda
+- Singapore
+- Royalbrunei
+- Evaair
+* Bottom 5 Airlines
+- Vuellng
+- American
+- Sumwing
+- Aircanada
+- United
+
+##Identification of Top 2 Airlines
+
+```{r, echo=TRUE}
+#Extracting data for top 5 and bottom 5 airlines from master data
+topfivedata <- filter(flightratings, airlinename %in% c("asiana-airlines",
+                                                        "garuda-indonesia",
+                                                        "singapore-airlines",
+                                                        "royal-brunei-airlines",
+                                                        "eva-air"))
+
+topfivedata$airlinename <- as.factor(topfivedata$airlinename)
+topfivedata$date <- dmy(topfivedata$date)
+topfivedata$date <- floor_date(topfivedata$date, unit = "year")
+#topfivedata$date <- quarter(topfivedata$date, with_year = TRUE)
+topfivedata <- group_by(topfivedata, airlinename, date) %>%
+                summarise(wtratingmean = mean(wtrating), 
+                          overallratingmean = mean(overallrating)) %>%
+                mutate(rateofchage = (wtratingmean/lag(wtratingmean - 1) -1 )*100)
+
+plot6 <- ggplot(topfivedata, aes(x = date, y = rateofchage, color = airlinename))
+plot6 <- plot6 + geom_line(lwd = 0.8)
+plot6 <- plot6 + theme(axis.text.x=element_text(size=14, vjust=0.5, face = "bold"), 
+                       plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.8),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2),
+               legend.title = element_blank()) +
+        labs(x = "Year", y = "% Change in Rating", title = "Change in Rating Over Time\nTop 5 Airlines")
+
+plot6
+```
+
+* Based on the changes in weighted ratings over time the following are the top two airlines:
+- Asiana Airlines - For their consistent increase in customer satisfaction in 2014
+- Eva air - For their consistent performance between 2011 to 2015
+
+##Identification of Worst 2 Airlines
+
+```{r, echo=TRUE}
+bottomfivedata <- filter(flightratings, airlinename %in% c("vueling-airlines", 
+                                                           "american-airlines",
+                                                           "sunwing-airlines",
+                                                           "air-canada-rouge",
+                                                           "united-airlines"))
+
+bottomfivedata$airlinename <- as.factor(bottomfivedata$airlinename)
+bottomfivedata$date <- dmy(bottomfivedata$date)
+#bottomfivedata$date <- floor_date(bottomfivedata$date, unit = "month")
+bottomfivedata$date <- quarter(bottomfivedata$date, with_year = TRUE)
+bottomfivedata <- filter(bottomfivedata, date >= 2014.1)
+bottomfivedata <- group_by(bottomfivedata, airlinename, date) %>%
+                  summarise(wtratingmean = mean(wtrating), 
+                            overallratingmean = mean(overallrating)) %>%
+                  mutate(rateofchage = (wtratingmean/lag(wtratingmean - 1) -1 )*100)
+
+plot7 <- ggplot(bottomfivedata, aes(x = date, y = rateofchage, color = airlinename))
+plot7 <- plot7 + geom_line(lwd = 0.8)
+plot7 <- plot7 + theme(axis.text.x=element_text(size=14, vjust=0.5, face = "bold"), 
+                       plot.title = element_text(size=20, face="bold", hjust = 0.5, vjust = 0.8),
+               axis.title.x = element_text(size=15, face="bold", vjust=1),
+               axis.title.y = element_text(size=15, face="bold", vjust=2),
+               legend.title = element_blank()) +
+        labs(x = "Quarter", y = "% Change in Rating", title = "Change in Rating Over Time\nBottom 5 Airlines")
+
+plot7
+```
+
+* Based on the changes in weighted ratings over time the following are the worst two airlines:
+- United Airlines - For the consistent decrease in customer satisfaction
+- Vueling Airlines - For the lowest performance between 2014 to 2015
+
+##Finding top 2 most liked features of top two airlines
+
+```{r, echo=TRUE, warning=FALSE}
+top2data <- filter(mmtmaster, airlinename %in% c("asiana-airlines",
+                                                 "eva-air")) %>%
+            select(airlinename, review, recommended)
+reviewtext <- paste(top2data$review, collapse = " ")
+reviewtext <- gsub("flight", "", reviewtext)
+reviewtext <- gsub("good", "", reviewtext)
+reviewtext <- gsub("airline", "", reviewtext)
+reviewtext <- gsub("asiana", "", reviewtext)
+#Setting up source and corpus
+reviewsource <- VectorSource(reviewtext)
+topcorpus <- Corpus(reviewsource)
+#Cleaning
+topcorpus <- tm_map(topcorpus, tolower)
+topcorpus <- tm_map(topcorpus, removePunctuation)
+topcorpus <- tm_map(topcorpus, removeNumbers)
+topcorpus <- tm_map(topcorpus, stripWhitespace)
+topcorpus <- tm_map(topcorpus, removeWords, stopwords("english"))
+#Making a Document Term Matrix
+topcorpus <- tm_map(topcorpus, PlainTextDocument)
+dtm <- DocumentTermMatrix(topcorpus)
+dtm2 <- as.matrix(dtm)
+#Finding most frequent terms
+topfrequency <- colSums(dtm2)
+topfrequency <- sort(topfrequency, decreasing = TRUE)
+topfeatures <- head(topfrequency, 20)
+wordcloud(topcorpus, scale=c(5,0.5), max.words=100, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+topfeatures
+```
+
+* The most admired features of top two airlines are following:
+- Comfortable sitting arrangement
+- Service provided by crew members
+
+##Finding top 2 least liked features of worst two airlines
+
+```{r, echo=TRUE, warning=FALSE}
+bottom2data <- filter(mmtmaster, airlinename %in% c("american-airlines",
+                                                 "vueling-airlines")) %>%
+               select(airlinename, review, recommended)
+reviewtext <- paste(bottom2data$review, collapse = " ")
+reviewtext <- gsub("flight", "", reviewtext)
+reviewtext <- gsub("good", "", reviewtext)
+reviewtext <- gsub("airline", "", reviewtext)
+#Setting up source and corpus
+reviewsource <- VectorSource(reviewtext)
+bottomcorpus <- Corpus(reviewsource)
+#Cleaning
+bottomcorpus <- tm_map(bottomcorpus, tolower)
+bottomcorpus <- tm_map(bottomcorpus, removePunctuation)
+bottomcorpus <- tm_map(bottomcorpus, removeNumbers)
+bottomcorpus <- tm_map(bottomcorpus, stripWhitespace)
+bottomcorpus <- tm_map(bottomcorpus, removeWords, stopwords("english"))
+#Making a Document Term Matrix
+bottomcorpus <- tm_map(bottomcorpus, PlainTextDocument)
+dtm <- DocumentTermMatrix(bottomcorpus)
+dtm2 <- as.matrix(dtm)
+#Finding most frequent terms
+bottomfrequency <- colSums(dtm2)
+bottomfrequency <- sort(bottomfrequency, decreasing = TRUE)
+bottomfeatures <- head(bottomfrequency, 20)
+wordcloud(bottomcorpus, scale=c(5,0.5), max.words=100, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+bottomfeatures
+```
+
+* Most disliked features of bottom two airlines are following:
+- Service not on time
+- Seat quality
+
+###Reference
+
+* Informative blog on ggplot2
+http://zevross.com/blog/2014/08/04/beautiful-plotting-in-r-a-ggplot2-cheatsheet-3/
+* A great introduction on text mining package
+https://georeferenced.wordpress.com/2013/01/15/rwordcloud/
